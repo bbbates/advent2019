@@ -30,7 +30,8 @@
 (assert (= [:out :imm :pos]) (parse-op-code 104))
 (assert (= [:out :imm :imm]) (parse-op-code 1104))
 
-;; Takes a memory map, the current instruction and parameter modes, and returns [new-memory-map, instr-ptr-modifier]
+;; Takes a memory map, the current instruction and parameter modes, and the computer-state map
+;; and returns [new-memory-map, instr-ptr-modifier]
 (defmulti execute-op-code (fn [_ [instr] _] instr))
 
 (defmethod execute-op-code :halt
@@ -44,35 +45,52 @@
     (get memory-map addr)))
 
 (defn- execute-arithmetic-op-code
-  [op memory-map [_ param1-mode param2-mode] addr]
+  [op memory-map [_ param1-mode param2-mode] {:keys [addr]}]
   (let [next-addr (+ addr 4)
         [_ in1 in2 output] (subvec memory-map addr next-addr)]
     [(assoc memory-map output
                        (op (param-value memory-map in1 param1-mode)
-                          (param-value memory-map in2 param2-mode)))
+                           (param-value memory-map in2 param2-mode)))
      next-addr]))
 
 (defmethod execute-op-code :add
-  [memory-map parsed-op-code addr]
-  (execute-arithmetic-op-code + memory-map parsed-op-code addr))
+  [memory-map parsed-op-code state]
+  (execute-arithmetic-op-code + memory-map parsed-op-code state))
 
 (defmethod execute-op-code :mul
-  [memory-map parsed-op-code addr]
-  (execute-arithmetic-op-code * memory-map parsed-op-code addr))
+  [memory-map parsed-op-code state]
+  (execute-arithmetic-op-code * memory-map parsed-op-code state))
 
+(defmethod execute-op-code :in
+  [memory-map _ {:keys [addr in-buff]}]
+  (let [next-addr (+ addr 2)
+        [_ in-addr] (subvec memory-map addr next-addr)
+        input (first @in-buff)]
+    (swap! in-buff (comp vec rest))
+    [(assoc memory-map in-addr input)
+     next-addr]))
+
+(defmethod execute-op-code :out
+  [memory-map _ {:keys [addr out-buff]}]
+  (let [next-addr (+ addr 2)
+        [_ out-addr] (subvec memory-map addr next-addr)]
+    (swap! out-buff (comp vec conj) (get memory-map out-addr))
+    [memory-map next-addr]))
 
 (defn execute
   "Execute the program, returning the new memory map after execution has completed"
-  [program]
-  (loop [memory-map program
-         op-ptr 0]
-    (if (>= op-ptr (count memory-map))
-      memory-map
-      (let [parsed-op-code (spy (parse-op-code (get memory-map op-ptr)))
-            [new-memory-map next-op-ptr] (execute-op-code memory-map parsed-op-code op-ptr)]
-        (if (= next-op-ptr :halt)
-          new-memory-map
-          (recur new-memory-map next-op-ptr))))))
+  [program & [in-buff out-buff]]
+  (let [base-state {:in-buff in-buff :out-buff out-buff}]
+    (loop [memory-map program
+           op-ptr 0]
+      (if (>= op-ptr (count memory-map))
+        memory-map
+        (let [parsed-op-code (parse-op-code (get memory-map op-ptr))
+              [new-memory-map next-op-ptr]
+              (execute-op-code memory-map parsed-op-code (assoc base-state :addr op-ptr))]
+          (if (= next-op-ptr :halt)
+            new-memory-map
+            (recur new-memory-map next-op-ptr)))))))
 
 ;; Day 2 assertions
 (assert (= (execute [1, 0, 0, 0, 99]) [2 0 0 0 99]))
