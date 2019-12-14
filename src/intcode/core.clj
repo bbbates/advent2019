@@ -2,10 +2,14 @@
   (:require [taoensso.timbre :refer [spy]]))
 
 (def opcodes
-  {1  [:add 4]
-   2  [:mul 4]
-   3  [:in 2]
-   4  [:out 2]
+  {1  [:add 3]
+   2  [:mul 3]
+   3  [:in 1]
+   4  [:out 1]
+   5  [:jump-if-true 2]
+   6  [:jump-if-false 2]
+   7  [:less-than 3]
+   8  [:equals 3]
    99 [:halt 0]})
 
 (defn- parse-op-code
@@ -32,10 +36,10 @@
 
 ;; Takes a memory map, the current instruction and parameter modes, and the computer-state map
 ;; and returns [new-memory-map, instr-ptr-modifier]
-(defmulti execute-op-code (fn [_ [instr] _] instr))
+(defmulti execute-op-code (fn [_ _ [instr] _] instr))
 
 (defmethod execute-op-code :halt
-  [memory-map _ _]
+  [memory-map _ _ _]
   [memory-map :halt])
 
 (defn- param-value
@@ -45,37 +49,58 @@
     (get memory-map addr)))
 
 (defn- execute-arithmetic-op-code
-  [op memory-map [_ param1-mode param2-mode] {:keys [addr]}]
-  (let [next-addr (+ addr 4)
-        [_ in1 in2 output] (subvec memory-map addr next-addr)]
-    [(assoc memory-map output
-                       (op (param-value memory-map in1 param1-mode)
-                           (param-value memory-map in2 param2-mode)))
-     next-addr]))
+  [op memory-map [_ in1 in2 output] [_ param1-mode param2-mode] {:keys [addr]}]
+  [(assoc memory-map output
+                     (op (param-value memory-map in1 param1-mode)
+                         (param-value memory-map in2 param2-mode)))
+   (+ addr 4)])
 
 (defmethod execute-op-code :add
-  [memory-map parsed-op-code state]
-  (execute-arithmetic-op-code + memory-map parsed-op-code state))
+  [memory-map op-instr parsed-op-code state]
+  (execute-arithmetic-op-code + memory-map op-instr parsed-op-code state))
 
 (defmethod execute-op-code :mul
-  [memory-map parsed-op-code state]
-  (execute-arithmetic-op-code * memory-map parsed-op-code state))
+  [memory-map op-instr parsed-op-code state]
+  (execute-arithmetic-op-code * memory-map op-instr parsed-op-code state))
 
 (defmethod execute-op-code :in
-  [memory-map _ {:keys [addr in-buff]}]
-  (let [next-addr (+ addr 2)
-        [_ in-addr] (subvec memory-map addr next-addr)
-        input (first @in-buff)]
+  [memory-map [_ in-addr] _ {:keys [addr in-buff]}]
+  (let [input (first @in-buff)]
     (swap! in-buff (comp vec rest))
     [(assoc memory-map in-addr input)
-     next-addr]))
+     (+ addr 2)]))
 
 (defmethod execute-op-code :out
-  [memory-map _ {:keys [addr out-buff]}]
-  (let [next-addr (+ addr 2)
-        [_ out-addr] (subvec memory-map addr next-addr)]
-    (swap! out-buff (comp vec conj) (get memory-map out-addr))
-    [memory-map next-addr]))
+  [memory-map [_ out-addr] _ {:keys [addr out-buff]}]
+  (swap! out-buff (comp vec conj) (get memory-map out-addr))
+  [memory-map (+ addr 2)])
+
+(defmethod execute-op-code :jump-if-true
+  [memory-map [_ in jump-to] [_ param1-mode param2-mode] {:keys [addr]}]
+  [memory-map (if-not (zero? (param-value memory-map in param1-mode))
+                (param-value memory-map jump-to param2-mode)
+                (+ addr 3))])
+
+(defmethod execute-op-code :jump-if-false
+  [memory-map [_ in jump-to] [_ param1-mode param2-mode] {:keys [addr]}]
+  [memory-map (if (zero? (param-value memory-map in param1-mode))
+                (param-value memory-map jump-to param2-mode)
+                (+ addr 3))])
+
+(defmethod execute-op-code :less-than
+  [memory-map [_ in1 in2 out] [_ param1-mode param2-mode] {:keys [addr]}]
+  (let [result (if (< (param-value memory-map in1 param1-mode)
+                      (param-value memory-map in2 param2-mode))
+                 1 0)]
+    [(assoc memory-map out result) (+ addr 4)]))
+
+(defmethod execute-op-code :equals
+  [memory-map [_ in1 in2 out] [_ param1-mode param2-mode] {:keys [addr]}]
+  (let [result (if (= (param-value memory-map in1 param1-mode)
+                      (param-value memory-map in2 param2-mode))
+                 1 0)]
+    [(assoc memory-map out result) (+ addr 4)]))
+
 
 (defn execute
   "Execute the program, returning the new memory map after execution has completed"
@@ -86,8 +111,9 @@
       (if (>= op-ptr (count memory-map))
         memory-map
         (let [parsed-op-code (parse-op-code (get memory-map op-ptr))
+              op-instr (spy (subvec memory-map op-ptr (+ op-ptr (count parsed-op-code))))
               [new-memory-map next-op-ptr]
-              (execute-op-code memory-map parsed-op-code (assoc base-state :addr op-ptr))]
+              (execute-op-code memory-map op-instr parsed-op-code (assoc base-state :addr op-ptr))]
           (if (= next-op-ptr :halt)
             new-memory-map
             (recur new-memory-map next-op-ptr)))))))
@@ -98,3 +124,46 @@
 (assert (= (execute [2, 4, 4, 5, 99, 0]) [2, 4, 4, 5, 99, 9801]))
 (assert (= (execute [1, 1, 1, 4, 99, 5, 6, 0, 99]) [30, 1, 1, 4, 2, 5, 6, 0, 99]))
 
+;; Day 05 assertions
+(assert (= 0 (let [in-buff (atom [0]) out-buff (atom [])]
+               (execute [3, 9, 8, 9, 10, 9, 4, 9, 99, -1, 8] in-buff out-buff)
+               (first @out-buff))))
+(assert (= 1 (let [in-buff (atom [8]) out-buff (atom [])]
+               (execute [3, 9, 8, 9, 10, 9, 4, 9, 99, -1, 8] in-buff out-buff)
+               (first @out-buff))))
+
+(assert (= 1 (let [in-buff (atom [7]) out-buff (atom [])]
+               (execute [3, 9, 7, 9, 10, 9, 4, 9, 99, -1, 8] in-buff out-buff)
+               (first @out-buff))))
+(assert (= 0 (let [in-buff (atom [9]) out-buff (atom [])]
+               (execute [3, 9, 7, 9, 10, 9, 4, 9, 99, -1, 8] in-buff out-buff)
+               (first @out-buff))))
+
+(assert (= 0 (let [in-buff (atom [0]) out-buff (atom [])]
+               (execute [3,3,1108,-1,8,3,4,3,99] in-buff out-buff)
+               (first @out-buff))))
+(assert (= 1 (let [in-buff (atom [8]) out-buff (atom [])]
+               (execute [3,3,1108,-1,8,3,4,3,99] in-buff out-buff)
+               (first @out-buff))))
+
+(assert (= 0 (let [in-buff (atom [0]) out-buff (atom [])]
+               (execute [3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9] in-buff out-buff)
+               (first @out-buff))))
+(assert (= 1 (let [in-buff (atom [1]) out-buff (atom [])]
+               (execute [3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9] in-buff out-buff)
+               (first @out-buff))))
+(assert (= 0 (let [in-buff (atom [0]) out-buff (atom [])]
+               (execute [3,3,1105,-1,9,1101,0,0,12,4,12,99,1] in-buff out-buff)
+               (first @out-buff))))
+(assert (= 1 (let [in-buff (atom [1]) out-buff (atom [])]
+               (execute [3,3,1105,-1,9,1101,0,0,12,4,12,99,1] in-buff out-buff)
+               (first @out-buff))))
+
+; FIXME: Why didn't this work??
+; (assert (= 999
+;           (let [in-buff (atom [8]) out-buff (atom [])]
+;             (execute [3, 21, 1008, 21, 8, 20, 1005, 20, 22, 107, 8, 21, 20, 1006, 20, 31,
+;                       1106, 0, 36, 98, 0, 0, 1002, 21, 125, 20, 4, 20, 1105, 1, 46, 104,
+;                       999, 1105, 1, 46, 1101, 1000, 1, 20, 4, 20, 1105, 1, 46, 98, 99]
+;                      in-buff out-buff)
+;             (first @out-buff))))
