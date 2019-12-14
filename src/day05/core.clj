@@ -1,11 +1,12 @@
-(ns day05.core)
+(ns day05.core
+  (:require [taoensso.timbre :as timbre :refer [spy]]
+            [intcode.core :as intcode]))
 
 (defn solve-part-one [program]
   (let [in-buff (atom [1])
         out-buff (atom [])]
-
-    )
-  )
+    (intcode/execute program in-buff out-buff)
+    (last @out-buff)))
 
 
 (defn -main []
