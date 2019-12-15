@@ -111,7 +111,7 @@
       (if (>= op-ptr (count memory-map))
         memory-map
         (let [parsed-op-code (parse-op-code (get memory-map op-ptr))
-              op-instr (spy (subvec memory-map op-ptr (+ op-ptr (count parsed-op-code))))
+              op-instr (subvec memory-map op-ptr (+ op-ptr (count parsed-op-code)))
               [new-memory-map next-op-ptr]
               (execute-op-code memory-map op-instr parsed-op-code (assoc base-state :addr op-ptr))]
           (if (= next-op-ptr :halt)
