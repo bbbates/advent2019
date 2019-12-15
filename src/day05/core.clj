@@ -26,4 +26,3 @@
     (println "Part 1 >>> " (solve-part-one program))
     (println "Part 2 >>> " (solve-part-two program))))
 
-(-main )
