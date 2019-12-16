@@ -65,10 +65,11 @@
 
 (defmethod execute-op-code :in
   [memory-map [_ in-addr] _ {:keys [addr in-buff]}]
-  (let [input (first @in-buff)]
-    (swap! in-buff (comp vec rest))
-    [(assoc memory-map in-addr input)
-     (+ addr 2)]))
+  (if-let [input (first @in-buff)]
+    (do (swap! in-buff (comp vec rest))
+        [(assoc memory-map in-addr input)
+         (+ addr 2)])
+    [memory-map :waiting]))
 
 (defmethod execute-op-code :out
   [memory-map [_ out-addr] _ {:keys [addr out-buff]}]
@@ -101,22 +102,29 @@
                  1 0)]
     [(assoc memory-map out result) (+ addr 4)]))
 
+(defn- halt-or-pause-exec?
+  [next-op-ptr]
+  (#{:halt :waiting :overrun} next-op-ptr))
 
-(defn execute
-  "Execute the program, returning the new memory map after execution has completed"
-  [program & [in-buff out-buff]]
+(defn execute-with-state
+  [{:keys [program op-ptr]} & [in-buff out-buff]]
   (let [base-state {:in-buff in-buff :out-buff out-buff}]
     (loop [memory-map program
-           op-ptr 0]
+           op-ptr op-ptr]
       (if (>= op-ptr (count memory-map))
-        memory-map
+        {:program memory-map :op-ptr op-ptr :state :overrun}
         (let [parsed-op-code (parse-op-code (get memory-map op-ptr))
               op-instr (subvec memory-map op-ptr (+ op-ptr (count parsed-op-code)))
               [new-memory-map next-op-ptr]
               (execute-op-code memory-map op-instr parsed-op-code (assoc base-state :addr op-ptr))]
-          (if (= next-op-ptr :halt)
-            new-memory-map
+          (if (halt-or-pause-exec? next-op-ptr)
+            {:program new-memory-map :op-ptr op-ptr :state next-op-ptr}
             (recur new-memory-map next-op-ptr)))))))
+
+(defn execute
+  "Execute the program, returning the new memory map after execution has completed"
+  [program & [in-buff out-buff]]
+  (:program (execute-with-state {:program program :op-ptr 0} in-buff out-buff)))
 
 ;; Day 2 assertions
 (assert (= (execute [1, 0, 0, 0, 99]) [2 0 0 0 99]))
