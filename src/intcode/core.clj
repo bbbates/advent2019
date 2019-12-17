@@ -10,6 +10,7 @@
    6  [:jump-if-false 2]
    7  [:less-than 3]
    8  [:equals 3]
+   9  [:relative-base 1]
    99 [:halt 0]})
 
 (defn- parse-op-code
@@ -33,6 +34,8 @@
 (assert (= [:out :pos :pos]) (parse-op-code 4))
 (assert (= [:out :imm :pos]) (parse-op-code 104))
 (assert (= [:out :imm :imm]) (parse-op-code 1104))
+
+
 
 ;; Takes a memory map, the current instruction and parameter modes, and the computer-state map
 ;; and returns [new-memory-map, instr-ptr-modifier]
@@ -107,19 +110,18 @@
   (#{:halt :waiting :overrun} next-op-ptr))
 
 (defn execute-with-state
-  [{:keys [program op-ptr]} & [in-buff out-buff]]
+  [{:keys [program op-ptr] :as init} & [in-buff out-buff]]
   (let [base-state {:in-buff in-buff :out-buff out-buff}]
-    (loop [memory-map program
-           op-ptr op-ptr]
-      (if (>= op-ptr (count memory-map))
-        {:program memory-map :op-ptr op-ptr :state :overrun}
-        (let [parsed-op-code (parse-op-code (get memory-map op-ptr))
-              op-instr (subvec memory-map op-ptr (+ op-ptr (count parsed-op-code)))
-              [new-memory-map next-op-ptr]
-              (execute-op-code memory-map op-instr parsed-op-code (assoc base-state :addr op-ptr))]
+    (loop [{:keys [program op-ptr state relative-base] :as intcode} init]
+      (if (>= op-ptr (count program))
+        (assoc intcode :state :overrun)
+        (let [parsed-op-code (parse-op-code (get program op-ptr))
+              op-instr (subvec program op-ptr (+ op-ptr (count parsed-op-code)))
+              [new-program next-op-ptr]
+              (execute-op-code program op-instr parsed-op-code (assoc base-state :addr op-ptr))]
           (if (halt-or-pause-exec? next-op-ptr)
-            {:program new-memory-map :op-ptr op-ptr :state next-op-ptr}
-            (recur new-memory-map next-op-ptr)))))))
+            (assoc intcode :program new-program :state next-op-ptr)
+            (recur (assoc intcode :program new-program :state nil :op-ptr next-op-ptr))))))))
 
 (defn execute
   "Execute the program, returning the new memory map after execution has completed"
@@ -148,23 +150,23 @@
                (first @out-buff))))
 
 (assert (= 0 (let [in-buff (atom [0]) out-buff (atom [])]
-               (execute [3,3,1108,-1,8,3,4,3,99] in-buff out-buff)
+               (execute [3, 3, 1108, -1, 8, 3, 4, 3, 99] in-buff out-buff)
                (first @out-buff))))
 (assert (= 1 (let [in-buff (atom [8]) out-buff (atom [])]
-               (execute [3,3,1108,-1,8,3,4,3,99] in-buff out-buff)
+               (execute [3, 3, 1108, -1, 8, 3, 4, 3, 99] in-buff out-buff)
                (first @out-buff))))
 
 (assert (= 0 (let [in-buff (atom [0]) out-buff (atom [])]
-               (execute [3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9] in-buff out-buff)
+               (execute [3, 12, 6, 12, 15, 1, 13, 14, 13, 4, 13, 99, -1, 0, 1, 9] in-buff out-buff)
                (first @out-buff))))
 (assert (= 1 (let [in-buff (atom [1]) out-buff (atom [])]
-               (execute [3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9] in-buff out-buff)
+               (execute [3, 12, 6, 12, 15, 1, 13, 14, 13, 4, 13, 99, -1, 0, 1, 9] in-buff out-buff)
                (first @out-buff))))
 (assert (= 0 (let [in-buff (atom [0]) out-buff (atom [])]
-               (execute [3,3,1105,-1,9,1101,0,0,12,4,12,99,1] in-buff out-buff)
+               (execute [3, 3, 1105, -1, 9, 1101, 0, 0, 12, 4, 12, 99, 1] in-buff out-buff)
                (first @out-buff))))
 (assert (= 1 (let [in-buff (atom [1]) out-buff (atom [])]
-               (execute [3,3,1105,-1,9,1101,0,0,12,4,12,99,1] in-buff out-buff)
+               (execute [3, 3, 1105, -1, 9, 1101, 0, 0, 12, 4, 12, 99, 1] in-buff out-buff)
                (first @out-buff))))
 
 ; FIXME: Why didn't this work??
@@ -175,3 +177,10 @@
 ;                       999, 1105, 1, 46, 1101, 1000, 1, 20, 4, 20, 1105, 1, 46, 98, 99]
 ;                      in-buff out-buff)
 ;             (first @out-buff))))
+
+
+(defn parse-intcode-program-file
+  [path]
+  (as-> (slurp path) $
+        (clojure.string/split $ #",")
+        (mapv (comp #(Integer/parseInt %) clojure.string/trim) $)))
